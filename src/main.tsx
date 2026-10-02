@@ -13,7 +13,7 @@ createRoot(document.getElementById('root')!).render(
 )
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  const wb = new Workbox('/sw.js')
+  const wb = new Workbox('sw.js')
   wb.register()
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e.data?.type === 'LOG_SYNCED') db.logs.update(Number(e.data.id), { status: 'synced' })
