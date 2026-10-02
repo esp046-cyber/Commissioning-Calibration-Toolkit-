@@ -1,0 +1,74 @@
+name: Build and publish images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci && npm run build
+      - run: npm ci --prefix server && node --check server/src/index.js
+
+  images:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { name: api, context: ./server }
+          - { name: web, context: . }
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/calibration-${{ matrix.name }}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: images
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production # add required reviewers in repo Settings > Environments
+    steps:
+      - name: Prepare release
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "### Images ready"
+            echo "- ghcr.io/$OWNER/calibration-api:sha-${GITHUB_SHA::7}"
+            echo "- ghcr.io/$OWNER/calibration-web:sha-${GITHUB_SHA::7}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Add your cloud's deploy step here (Azure Container Apps, AWS ECS, Cloud Run, a VM with
+      # `docker compose pull && docker compose up -d`, etc.). It needs your cloud credentials as secrets.
